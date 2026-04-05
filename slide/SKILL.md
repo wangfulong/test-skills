@@ -23,16 +23,16 @@ Create presentations as pure HTML. No build tools, no frameworks — just HTML, 
 
 Pick ONE aesthetic. Set `data-aesthetic="name"` on `<html>`. The frontend resolves to actual colors — **never hardcode hex colors**.
 
-| Aesthetic | Feel | Best for |
-|-----------|------|----------|
-| `editorial` | Serif, generous whitespace, earth tones + gold | Keynotes, narratives |
-| `blueprint` | Technical drawing, slate/blue palette | Architecture, system talks |
-| `paper-ink` | Warm cream, terracotta/sage | Tutorials, creative pitches |
-| `mono-terminal` | Green/amber on dark, CRT feel | Technical demos |
-| `data-dense` | Tight spacing, maximum information | Data presentations |
-| `warm` | Peach/cream, friendly | General purpose |
-| `dracula` | Purple-heavy, Dracula IDE scheme | Developer talks |
-| `nord` | Cool arctic blues, minimalist | Clean, minimal decks |
+| Aesthetic | Feel | Best for | NEVER combine with |
+|-----------|------|----------|--------------------|
+| `editorial` | Serif, generous whitespace, earth tones + gold | Keynotes, narratives | Bright colors, card grids, tech iconography |
+| `blueprint` | Technical drawing, slate/blue palette | Architecture, system talks | Warm tones, soft edges, decorative elements |
+| `paper-ink` | Warm cream, terracotta/sage | Tutorials, creative pitches | Neon accents, dark backgrounds, gradients |
+| `mono-terminal` | Green/amber on dark, CRT feel | Technical demos | Serif fonts, pastel colors, rounded cards |
+| `data-dense` | Tight spacing, maximum information | Data presentations | Decorative elements, animations, vague labels |
+| `warm` | Peach/cream, friendly | General purpose | Cold blues, harsh shadows, sterile grids |
+| `dracula` | Purple-heavy, Dracula IDE scheme | Developer talks | Warm earth tones, serif body text |
+| `nord` | Cool arctic blues, minimalist | Clean, minimal decks | Warm accents, ornamental fonts, dense layouts |
 
 **Constrained aesthetics** (editorial, blueprint, paper-ink, mono-terminal) produce more distinctive results.
 
@@ -238,6 +238,40 @@ Caption:         16px  muted color
 6. **Monospace for data** — numbers, stats, code use `var(--widget-font-mono)`
 7. **Compositional variety** — alternate centered, left-aligned, and grid layouts
 
+## Design DON'Ts (CRITICAL — read before every deck)
+
+These rules eliminate the most common AI-generated slide problems. Violating any of these produces generic, forgettable output.
+
+### Typography
+- **DON'T** use Inter, Roboto, Open Sans, Arial, or system fonts as display/heading fonts — they are invisible on stage
+- **DON'T** mix more than 2 font families — one body + one accent is enough
+- **DON'T** use ALL CAPS headings — use weight and size contrast instead
+- **DON'T** use monospace for body text — reserve it for data, stats, and code only
+- **DON'T** use font sizes too close together — hierarchy needs big jumps (80px title vs 26px body), not small steps (28px vs 24px)
+
+### Color
+- **DON'T** use pure black (#000) or pure white (#fff) — always tint. Use `var(--widget-bg-primary)` and `var(--widget-text-primary)` instead
+- **DON'T** use cyan-on-dark, purple-to-blue gradients, or neon accents on dark backgrounds — this is the #1 "AI slop" aesthetic
+- **DON'T** use gradient text on headings or metrics — it's decorative noise, not design
+- **DON'T** use gray text on colored backgrounds — use a tinted shade of the background color
+- **DON'T** overuse the accent color — 10% max. When everything is highlighted, nothing is
+
+### Layout
+- **DON'T** wrap every element in a card — slides are already contained. Cards inside slides add visual noise
+- **DON'T** use the same card grid on every slide — 3 identical cards repeated = monotonous template
+- **DON'T** center everything — left-aligned text with asymmetric layouts feels more designed
+- **DON'T** use the same spacing everywhere — rhythm needs variety (tight groups + generous gaps)
+- **DON'T** use the "hero metric" template on every data slide (big number, small label, gradient accent) — vary data presentation
+- **DON'T** nest cards inside cards — ever
+
+### Visual
+- **DON'T** use glassmorphism (blur effects) as decoration
+- **DON'T** use rounded rectangles with thick colored borders as "accent" — it's lazy
+- **DON'T** use glowing box-shadows or drop-shadows as decoration
+- **DON'T** use sparklines or mini-charts that look sophisticated but convey nothing
+- **DON'T** add decorative elements (dots, lines, shapes) without clear purpose
+- **DON'T** use bounce or elastic animations — they feel dated. Use ease-out only
+
 ## Blueprint Attributes (MANDATORY)
 
 Every slide deck MUST include these data attributes for per-page iteration support.
@@ -302,23 +336,18 @@ These attributes are **data-only** -- they do NOT affect styling or layout. Neve
 
 ## Quality Gates
 
-1. All colors use `var(--widget-*)` — no hardcoded hex
-2. Typography hierarchy clear (title > heading > body > caption)
-3. No horizontal overflow
-4. Fallback CSS vars match chosen aesthetic
-5. All slides in one HTML document — one widget, not multiple
-6. Navigation JS included
-7. Every `<section>` has `data-page="N"` (1-indexed)
-8. Every editable element has a unique `data-bp-id`
+Before outputting, verify EVERY gate:
 
-## Anti-Patterns (NEVER)
-
-- Emoji section headers
-- Uniform card grids on every slide
-- Three-dot macOS window chrome
-- Gradient text headings
-- Glowing box-shadows
-- Generic placeholder images
+1. **Color**: All colors use `var(--widget-*)`. No hardcoded hex. No pure #000/#fff. Accent used ≤10%
+2. **Typography**: Clear hierarchy with big jumps (not small steps). Max 2 font families. No Inter/Roboto/Arial
+3. **Layout**: No card-wrapped-everything. At least 3 different layout types across the deck. No identical card grids repeated
+4. **Spacing**: Varied rhythm — tight content groups separated by generous whitespace. Not uniform spacing
+5. **Anti-slop**: Zero gradient text. Zero glassmorphism. Zero neon-on-dark. Zero nested cards. Zero decorative sparklines
+6. **Variety**: No two consecutive slides share the same layout class
+7. **Structure**: All slides in one HTML document — one widget. Navigation JS included
+8. **Data attributes**: Every `<section>` has `data-page="N"` (1-indexed). Every editable element has unique `data-bp-id`
+9. **Squint test**: Blur your eyes — can you still identify the hierarchy on each slide? If not, increase contrast
+10. No horizontal overflow. Fallback CSS vars match chosen aesthetic
 
 ## Reference Files
 
