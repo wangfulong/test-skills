@@ -65,8 +65,13 @@ If user provides no raw materials (just a prompt), skip this step — go straigh
      index.html        # The slide deck
      assets/            # Images, data files (if needed)
    ```
-4. Output the same HTML as a `widget` code block in chat (for immediate preview)
-5. Update `/code/INDEX.md`
+4. Create `/code/slides/.slide` marker file (empty, triggers Gallery detection in frontend)
+5. Output a reference tag in chat (NOT the full HTML):
+   ```
+   <rebyte-slide path="/code/slides/{slug}/index.html" pages="{N}" title="{deck title}" />
+   ```
+   This triggers the frontend to open the Slide Editor automatically.
+6. Update `/code/INDEX.md`
 
 ### Update existing deck
 
@@ -74,7 +79,10 @@ If user provides no raw materials (just a prompt), skip this step — go straigh
 2. Locate the target `<section data-page="N">`
 3. Edit specific pages using code editing tools (read → find section → edit → save)
 4. **Preserve all `data-page` and `data-bp-id` attributes**
-5. Output the updated HTML as a `widget` code block in chat
+5. After saving, output the reference tag:
+   ```
+   <rebyte-slide path="/code/slides/{slug}/index.html" pages="{N}" title="{deck title}" />
+   ```
 6. Update `/code/INDEX.md` (last updated date)
 
 ## Step 4: Illustrations (image-workflow, optional)
@@ -94,7 +102,7 @@ The core value loop — user gives feedback, agent refines:
 2. Agent reads `/code/slides/{slug}/index.html`
 3. Edits specific pages using code editing tools
 4. Can reference `/code/raw/` for additional context
-5. Outputs updated `widget` in chat for preview
+5. After saving, the frontend auto-detects the file change and refreshes the preview
 6. Updates `INDEX.md` after changes
 
 Iteration should be **surgical**: edit only the pages the user mentioned. Never regenerate the entire deck unless explicitly asked.

@@ -90,12 +90,13 @@ Always use these. NEVER hardcode colors.
 
 ## Creating Slides
 
-The entire presentation is one `widget` code block containing all slides as `<section>` elements.
+The entire presentation is one HTML file containing all slides as `<section>` elements.
 
 ### Output Format
 
-````
-```widget
+Save the HTML to `/code/slides/{slug}/index.html` (the workflow skill handles the path).
+
+```html
 <html data-aesthetic="editorial" data-font="instrument-serif" data-slides="true">
   <head>...</head>
   <body>
@@ -108,11 +109,8 @@ The entire presentation is one `widget` code block containing all slides as `<se
   </body>
 </html>
 ```
-````
 
-**Do NOT save as files.** Output the widget directly in your response.
-
-**Size limit:** Under 5 MB.
+**Save as a file**, not as a widget code block in chat. The frontend reads the file from the VM.
 
 ### HTML Architecture
 
