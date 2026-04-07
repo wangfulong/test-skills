@@ -347,6 +347,89 @@ Before outputting, verify EVERY gate:
 9. **Squint test**: Blur your eyes — can you still identify the hierarchy on each slide? If not, increase contrast
 10. No horizontal overflow. Fallback CSS vars match chosen aesthetic
 
+## Visual Review Pass (best-effort lint)
+
+After saving the slide HTML, run a visual lint pass to catch rendering bugs the design rules can't prevent: text overflow, image-text overlap, font fallback, layout misalignment, aesthetic drift. This is a **best-effort sanity check**, not a hard quality gate — treat it like a linter, not a test suite. If review can't run (Chrome unavailable, screenshot fails), log a warning and continue delivery.
+
+### When to run
+
+- **Always** at the end of the slide skill, after the final save
+- **New deck** → review every page
+- **Iteration** (single-page draw annotation, follow-up edit) → review only the pages that changed
+
+### How it works
+
+The VM has Chrome running on `localhost:9222` with the `agent-browser` CLI preinstalled (see the browser-automation skill for the underlying tool). Visual review uses Chrome via CDP — no Playwright, no Gemini API, no extra installs. **Claude itself reads the screenshots (multimodal) and judges each page** — there is no separate VLM service.
+
+### Steps
+
+**1. Signal the frontend to switch to the Browser tab** (so the user watches the AI review). Emit this tag once at the start of the review pass:
+
+    <rebyte-browser-review path="/code/slides/{slug}/index.html" pages="[1,2,3]" />
+
+`pages` is a JSON array of 1-indexed page numbers being reviewed.
+
+**2. For each page N, navigate Chrome and screenshot:**
+
+```bash
+export AGENT_BROWSER_AUTO_CONNECT=1
+
+agent-browser open "file:///code/slides/{slug}/index.html?page={N}" \
+  && agent-browser wait --load load \
+  && agent-browser eval "document.fonts.ready.then(() => 'ready')" \
+  && agent-browser wait 500 \
+  && agent-browser screenshot /tmp/review-{slug}-p{N}.png --width 1920 --height 1080
+```
+
+The `?page={N}` query param tells the slide nav engine to jump directly to page N (handled by the engine init in `references/css-patterns.md`). The 500ms settle covers font-substitution layout shift after `document.fonts.ready` resolves. **Do not use `--load networkidle`** — slides with CDN libraries (Chart.js, Mermaid) or animations never settle.
+
+**3. Run the DOM overflow check** — deterministic, catches bugs the screenshot misses because they render outside the viewport:
+
+```bash
+agent-browser eval "(() => {
+  const slide = document.querySelector('.slide--active');
+  if (!slide) return JSON.stringify({ error: 'no active slide' });
+  const r = slide.getBoundingClientRect();
+  const issues = [];
+  for (const el of slide.querySelectorAll('*')) {
+    const c = el.getBoundingClientRect();
+    if (c.width === 0 && c.height === 0) continue;
+    const overflow = Math.max(r.top - c.top, c.bottom - r.bottom, r.left - c.left, c.right - r.right);
+    if (overflow > 1) issues.push({ tag: el.tagName, bp: el.dataset.bpId || null, overflowPx: Math.round(overflow) });
+  }
+  return JSON.stringify({ page: slide.dataset.page, ok: issues.length === 0, issues: issues.slice(0, 5) });
+})()"
+```
+
+This walks every descendant of the active slide and checks how far each one sticks out past the slide's box on any side. Returns up to 5 worst offenders. Works regardless of CSS layout mode (flex, absolute, grid) — unlike `scrollHeight > clientHeight`, which fails when the slide container is dimensionally locked by `position: absolute; inset: 0`.
+
+**4. Read the screenshot.** Use the `Read` tool on `/tmp/review-{slug}-p{N}.png`. You will see the rendered slide as an image. Evaluate against this checklist:
+
+- Text overflow or clipping (cross-reference with the DOM check)
+- Image-text overlap or unreadable text-on-background
+- Crowded layout — too much content for 1920×1080
+- Misalignment — visually broken grids, columns, or vertical rhythm
+- Aesthetic drift — wrong fonts loaded, wrong colors, broken theme
+- Anything from the Design DON'Ts list that slipped past the Quality Gates
+
+**5. Fix and retry.** If EITHER the DOM check OR your visual review flags issues:
+- Edit the HTML — target the specific section by `data-page="N"` and `data-bp-id`
+- Re-run steps 2–4 for that page
+- **Hard cap: 1 retry per page.** If the second pass still has issues, log them as known limitations and move on. **Never loop.**
+
+**6. After all pages reviewed**, emit the final reference tag — this auto-switches Agent Computer back to the Slides tab and surfaces the finished deck:
+
+    <rebyte-slide path="/code/slides/{slug}/index.html" pages="N" title="Deck title" />
+
+### Failure mode
+
+If `curl http://localhost:9222/json/version` fails, or `agent-browser` is missing, or screenshot writes fail:
+- Print a one-line warning to the user: `⚠️ Visual review skipped: Chrome not reachable`
+- Still emit the final `<rebyte-slide>` tag — the deck is delivered
+- Do **not** fail the slide skill
+
+Visual review is polish, not a delivery gate.
+
 ## Reference Files
 
 | File | Description |

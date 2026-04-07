@@ -364,7 +364,9 @@ Copy this verbatim into your `<script>` tag:
   }
   window.addEventListener('resize', resize);
   resize();
-  show(0);
+  // Read ?page=N (1-indexed) from URL — used by the visual review pass to jump directly to a page
+  var startPage = parseInt(new URLSearchParams(window.location.search).get('page'), 10);
+  show(isNaN(startPage) ? 0 : Math.max(0, startPage - 1));
   document.body.focus();
 })();
 ```
