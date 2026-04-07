@@ -347,119 +347,109 @@ Before outputting, verify EVERY gate:
 9. **Squint test**: Blur your eyes — can you still identify the hierarchy on each slide? If not, increase contrast
 10. No horizontal overflow. Fallback CSS vars match chosen aesthetic
 
-## Visual Review Pass (best-effort lint)
+## DOM Lint Pass (deterministic post-render check)
 
-After saving the slide HTML, run a visual lint pass to catch rendering bugs the design rules can't prevent: text overflow, image-text overlap, font fallback, layout misalignment, aesthetic drift. This is a **best-effort sanity check**, not a hard quality gate — treat it like a linter, not a test suite. If review can't run (Chrome unavailable, screenshot fails), log a warning and continue delivery.
+After saving the slide HTML, run a deterministic DOM lint to catch the bugs the design rules can't prevent at write time: text overflow from real font metrics, layout bugs from CSS interactions, oversized stat numbers, image-text overlap. **No screenshot reading, no visual judgment** — just bounding-box math and structural checks. Single bash invocation, single Chrome page load. Fast (~5s for a 10-page deck) and deterministic.
+
+This is **polish, not a delivery gate**. If the lint can't run (Chrome unavailable, fresh VM with no chromium), log a warning and ship the deck anyway. The 10 Quality Gates above are the primary line of defense; this is the safety net for what they can't see.
 
 ### When to run
 
 - **Always** at the end of the slide skill, after the final save
-- **New deck** → review every page
-- **Iteration** (single-page draw annotation, follow-up edit) → review only the pages that changed
+- **New deck** → lint every page
+- **Iteration** (single-page draw annotation, follow-up edit) → lint only the pages that changed
 
 ### How it works
 
-Every cctools VM has a headful Chrome that lives on `localhost:9222` with `agent-browser` CLI preinstalled — but **Chrome is started lazily by the relay when the user opens the Browser tab in Agent Computer**. On a fresh VM where the Browser tab has never been opened, calling `agent-browser` directly will fail with `No running Chrome instance`. The first review step below solves this AND the UX-signaling problem in one move.
+The VM has Chrome on `localhost:9222` with `agent-browser` CLI preinstalled. The lint loads the deck once via `file://`, walks every slide by toggling `.slide--active`, and reports overflowing children with their `data-bp-id`. You (Claude) read **JSON only** — never screenshots. Aesthetic checks belong in the Quality Gates (write time), not here.
 
-Visual review uses Chrome via CDP — no Playwright, no Gemini API, no extra installs. **You (Claude) read the screenshots multimodally and judge each page** — there is no separate VLM service.
-
-### Steps — execute in order, do not skip
-
-#### Step 1 — REQUIRED, FIRST: emit the review signal tag in your reply text
-
-**Before any tool call, before any bash command, before any thinking,** output this exact line as plain text in your reply (NOT inside a code block, NOT as a markdown comment, NOT in a thinking block — as visible response text the user will see):
-
-    Starting visual review pass on /code/slides/{slug}/index.html ({N} pages) — <rebyte-browser-review path="/code/slides/{slug}/index.html" pages="[1,2,3]" />
-
-Where `pages` is a JSON array of 1-indexed page numbers being reviewed.
-
-This tag does **two critical things**:
-1. **Signals the user the review is happening** — without it they have no idea what you're doing for the next 30+ seconds
-2. **Bootstraps Chrome** — the cctools frontend reacts to this tag by opening the Browser tab in Agent Computer, which causes the relay to spawn the headful Chrome on `localhost:9222`. Skipping this step means your subsequent `agent-browser` calls will fail with "No running Chrome instance" on fresh VMs.
-
-**DO NOT SKIP THIS STEP.** It is both UX and a functional preflight. The tag is not optional — it is the entry point for the entire review pass.
-
-#### Step 2 — Wait for Chrome to be reachable
-
-Chrome takes a moment to spawn after the Browser tab opens. Block until CDP responds:
-
-```bash
-for i in $(seq 1 15); do
-  curl -sf http://localhost:9222/json/version > /dev/null 2>&1 && echo "Chrome ready" && break
-  sleep 1
-done
-```
-
-If after 15 seconds Chrome is still unreachable, the lazy-init flow failed. Fall back to **chrome-devtools MCP tools** (`mcp__chrome-devtools__*` family) — these manage their own Chrome lifecycle and run the same logic. The rest of the steps below work the same regardless of which tool family you use.
-
-#### Step 3 — For each page N, navigate and screenshot
+### Step 1 — Run the lint
 
 ```bash
 export AGENT_BROWSER_AUTO_CONNECT=1
 
-agent-browser open "file:///code/slides/{slug}/index.html?page={N}" \
+agent-browser open "file:///code/slides/{slug}/index.html" \
   && agent-browser wait --load load \
-  && agent-browser eval "document.fonts.ready.then(() => 'ready')" \
-  && agent-browser wait 500 \
-  && agent-browser screenshot /tmp/review-{slug}-p{N}.png --width 1920 --height 1080
+  && agent-browser eval "
+    document.fonts.ready.then(() => {
+      const slides = document.querySelectorAll('.slide');
+      const report = [];
+      for (let i = 0; i < slides.length; i++) {
+        slides.forEach((s, j) => {
+          s.classList.remove('slide--active', 'slide--prev', 'slide--next');
+          if (j === i) s.classList.add('slide--active');
+          else if (j < i) s.classList.add('slide--prev');
+          else s.classList.add('slide--next');
+        });
+        void slides[i].offsetHeight; // force reflow
+        const slide = slides[i];
+        const r = slide.getBoundingClientRect();
+        const issues = [];
+        for (const el of slide.querySelectorAll('*')) {
+          const c = el.getBoundingClientRect();
+          if (c.width === 0 && c.height === 0) continue;
+          const overflow = Math.max(r.top - c.top, c.bottom - r.bottom, r.left - c.left, c.right - r.right);
+          if (overflow > 1) issues.push({ tag: el.tagName, bp: el.dataset.bpId || null, overflowPx: Math.round(overflow) });
+        }
+        report.push({ page: parseInt(slide.dataset.page, 10) || (i + 1), ok: issues.length === 0, issues: issues.slice(0, 5) });
+      }
+      return JSON.stringify(report);
+    })
+  "
 ```
 
-The `?page={N}` query param tells the slide nav engine to jump directly to page N (handled by the engine init in `references/css-patterns.md`). The 500ms settle covers font-substitution layout shift after `document.fonts.ready` resolves. **Do not use `--load networkidle`** — slides with CDN libraries (Chart.js, Mermaid) or animations never settle.
+What this does:
+- Loads the deck once via `file://`
+- Waits for `window.load` (DOM + assets settled)
+- The eval awaits `document.fonts.ready` so font fallback layout shifts have happened
+- Loops through every slide programmatically by swapping `.slide--active` (same mechanism as the nav engine)
+- Forces a reflow per page (`void slides[i].offsetHeight`)
+- Walks every descendant of the active slide
+- Computes how far each child sticks out past the slide's box on any side
+- Returns up to 5 worst offenders per page
 
-If `agent-browser` still fails despite step 2's warmup, switch to `mcp__chrome-devtools__*` tools — they implement equivalent navigate/screenshot/eval operations.
+**Do not use `--load networkidle`** — slides with CDN libraries (Chart.js, Mermaid) or animations never settle. `--load load` + `document.fonts.ready` is the right combination.
 
-#### Step 4 — DOM overflow check (deterministic, catches bugs the screenshot misses)
+The bounding-box math (rather than `scrollHeight > clientHeight`) is required because the slide container is dimensionally locked by `position: absolute; inset: 0` — `scrollHeight` equals `clientHeight` even when content overflows.
 
-```bash
-agent-browser eval "(() => {
-  const slide = document.querySelector('.slide--active');
-  if (!slide) return JSON.stringify({ error: 'no active slide' });
-  const r = slide.getBoundingClientRect();
-  const issues = [];
-  for (const el of slide.querySelectorAll('*')) {
-    const c = el.getBoundingClientRect();
-    if (c.width === 0 && c.height === 0) continue;
-    const overflow = Math.max(r.top - c.top, c.bottom - r.bottom, r.left - c.left, c.right - r.right);
-    if (overflow > 1) issues.push({ tag: el.tagName, bp: el.dataset.bpId || null, overflowPx: Math.round(overflow) });
-  }
-  return JSON.stringify({ page: slide.dataset.page, ok: issues.length === 0, issues: issues.slice(0, 5) });
-})()"
+### Step 2 — Read the JSON report
+
+The eval returns a JSON array like:
+
+```json
+[
+  {"page": 1, "ok": true, "issues": []},
+  {"page": 2, "ok": false, "issues": [{"tag": "H1", "bp": "title-2", "overflowPx": 55}]},
+  {"page": 3, "ok": true, "issues": []},
+  {"page": 4, "ok": true, "issues": []}
+]
 ```
 
-This walks every descendant of the active slide and checks how far each one sticks out past the slide's box on any side. Returns up to 5 worst offenders. Works regardless of CSS layout mode (flex, absolute, grid) — unlike `scrollHeight > clientHeight`, which fails when the slide container is dimensionally locked by `position: absolute; inset: 0`.
+Each `ok: false` page tells you exactly which element by `bp` (the `data-bp-id`) and how many pixels it overshoots.
 
-#### Step 5 — Read the screenshot and judge
+### Step 3 — Fix and retry (max 1 per page)
 
-Use the `Read` tool on `/tmp/review-{slug}-p{N}.png`. You will see the rendered slide as an image. Evaluate against this checklist:
+For each page where `ok: false`:
+- Edit the HTML — target the offending element by `data-bp-id` (e.g., `title-2`)
+- Common fixes: shrink font-size, shorten text, split into multiple slides, reduce padding
+- Re-run the lint command from step 1
+- **Hard cap: 1 retry per page.** If the second pass still fails, log the remaining issues as known limitations and move on. **Never loop.**
 
-- Text overflow or clipping (cross-reference with the DOM check)
-- Image-text overlap or unreadable text-on-background
-- Crowded layout — too much content for 1920×1080
-- Misalignment — visually broken grids, columns, or vertical rhythm
-- Aesthetic drift — wrong fonts loaded, wrong colors, broken theme
-- Anything from the Design DON'Ts list that slipped past the Quality Gates
+### Step 4 — Emit final reference tag
 
-#### Step 6 — Fix and retry (max 1 per page)
-
-If EITHER the DOM check OR your visual review flags issues:
-- Edit the HTML — target the specific section by `data-page="N"` and `data-bp-id`
-- Re-run steps 3–5 for that page
-- **Hard cap: 1 retry per page.** If the second pass still has issues, log them as known limitations and move on. **Never loop.**
-
-#### Step 7 — Emit final reference tag
-
-After all pages reviewed, emit the final reference tag — this auto-switches Agent Computer back to the Slides tab and surfaces the finished deck:
+After all pages pass (or retry budget exhausted), emit the final reference tag. This is the existing `<rebyte-slide>` pattern that surfaces the deck card in chat:
 
     <rebyte-slide path="/code/slides/{slug}/index.html" pages="N" title="Deck title" />
 
-### Failure mode
+### If Chrome is unreachable
 
-If `curl http://localhost:9222/json/version` fails, or `agent-browser` is missing, or screenshot writes fail:
-- Print a one-line warning to the user: `⚠️ Visual review skipped: Chrome not reachable`
-- Still emit the final `<rebyte-slide>` tag — the deck is delivered
-- Do **not** fail the slide skill
+Fresh VMs don't always have Chrome running on `localhost:9222` — the cctools relay starts the headful Chrome lazily when the user opens the Browser tab in Agent Computer. If `agent-browser` fails with `No running Chrome instance`, fall back in this order:
 
-Visual review is polish, not a delivery gate.
+1. Start chromium yourself: `pgrep chromium > /dev/null || /usr/bin/chromium --remote-debugging-port=9222 --headless --no-sandbox --disable-gpu &` then wait a second and retry agent-browser
+2. If chromium isn't installed at `/usr/bin/chromium`, find it: `which google-chrome google-chrome-stable chromium chromium-browser`
+3. As a final fallback, use `mcp__chrome-devtools__*` tools — they manage their own Chrome lifecycle and can run the same eval logic
+
+If everything fails, print `⚠️ DOM lint skipped: Chrome not reachable`, still emit the final `<rebyte-slide>` tag, and exit cleanly. Lint is polish, not a delivery gate.
 
 ## Reference Files
 
