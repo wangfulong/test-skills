@@ -359,17 +359,40 @@ After saving the slide HTML, run a visual lint pass to catch rendering bugs the 
 
 ### How it works
 
-The VM has Chrome running on `localhost:9222` with the `agent-browser` CLI preinstalled (see the browser-automation skill for the underlying tool). Visual review uses Chrome via CDP — no Playwright, no Gemini API, no extra installs. **Claude itself reads the screenshots (multimodal) and judges each page** — there is no separate VLM service.
+Every cctools VM has a headful Chrome that lives on `localhost:9222` with `agent-browser` CLI preinstalled — but **Chrome is started lazily by the relay when the user opens the Browser tab in Agent Computer**. On a fresh VM where the Browser tab has never been opened, calling `agent-browser` directly will fail with `No running Chrome instance`. The first review step below solves this AND the UX-signaling problem in one move.
 
-### Steps
+Visual review uses Chrome via CDP — no Playwright, no Gemini API, no extra installs. **You (Claude) read the screenshots multimodally and judge each page** — there is no separate VLM service.
 
-**1. Signal the frontend to switch to the Browser tab** (so the user watches the AI review). Emit this tag once at the start of the review pass:
+### Steps — execute in order, do not skip
 
-    <rebyte-browser-review path="/code/slides/{slug}/index.html" pages="[1,2,3]" />
+#### Step 1 — REQUIRED, FIRST: emit the review signal tag in your reply text
 
-`pages` is a JSON array of 1-indexed page numbers being reviewed.
+**Before any tool call, before any bash command, before any thinking,** output this exact line as plain text in your reply (NOT inside a code block, NOT as a markdown comment, NOT in a thinking block — as visible response text the user will see):
 
-**2. For each page N, navigate Chrome and screenshot:**
+    Starting visual review pass on /code/slides/{slug}/index.html ({N} pages) — <rebyte-browser-review path="/code/slides/{slug}/index.html" pages="[1,2,3]" />
+
+Where `pages` is a JSON array of 1-indexed page numbers being reviewed.
+
+This tag does **two critical things**:
+1. **Signals the user the review is happening** — without it they have no idea what you're doing for the next 30+ seconds
+2. **Bootstraps Chrome** — the cctools frontend reacts to this tag by opening the Browser tab in Agent Computer, which causes the relay to spawn the headful Chrome on `localhost:9222`. Skipping this step means your subsequent `agent-browser` calls will fail with "No running Chrome instance" on fresh VMs.
+
+**DO NOT SKIP THIS STEP.** It is both UX and a functional preflight. The tag is not optional — it is the entry point for the entire review pass.
+
+#### Step 2 — Wait for Chrome to be reachable
+
+Chrome takes a moment to spawn after the Browser tab opens. Block until CDP responds:
+
+```bash
+for i in $(seq 1 15); do
+  curl -sf http://localhost:9222/json/version > /dev/null 2>&1 && echo "Chrome ready" && break
+  sleep 1
+done
+```
+
+If after 15 seconds Chrome is still unreachable, the lazy-init flow failed. Fall back to **chrome-devtools MCP tools** (`mcp__chrome-devtools__*` family) — these manage their own Chrome lifecycle and run the same logic. The rest of the steps below work the same regardless of which tool family you use.
+
+#### Step 3 — For each page N, navigate and screenshot
 
 ```bash
 export AGENT_BROWSER_AUTO_CONNECT=1
@@ -383,7 +406,9 @@ agent-browser open "file:///code/slides/{slug}/index.html?page={N}" \
 
 The `?page={N}` query param tells the slide nav engine to jump directly to page N (handled by the engine init in `references/css-patterns.md`). The 500ms settle covers font-substitution layout shift after `document.fonts.ready` resolves. **Do not use `--load networkidle`** — slides with CDN libraries (Chart.js, Mermaid) or animations never settle.
 
-**3. Run the DOM overflow check** — deterministic, catches bugs the screenshot misses because they render outside the viewport:
+If `agent-browser` still fails despite step 2's warmup, switch to `mcp__chrome-devtools__*` tools — they implement equivalent navigate/screenshot/eval operations.
+
+#### Step 4 — DOM overflow check (deterministic, catches bugs the screenshot misses)
 
 ```bash
 agent-browser eval "(() => {
@@ -403,7 +428,9 @@ agent-browser eval "(() => {
 
 This walks every descendant of the active slide and checks how far each one sticks out past the slide's box on any side. Returns up to 5 worst offenders. Works regardless of CSS layout mode (flex, absolute, grid) — unlike `scrollHeight > clientHeight`, which fails when the slide container is dimensionally locked by `position: absolute; inset: 0`.
 
-**4. Read the screenshot.** Use the `Read` tool on `/tmp/review-{slug}-p{N}.png`. You will see the rendered slide as an image. Evaluate against this checklist:
+#### Step 5 — Read the screenshot and judge
+
+Use the `Read` tool on `/tmp/review-{slug}-p{N}.png`. You will see the rendered slide as an image. Evaluate against this checklist:
 
 - Text overflow or clipping (cross-reference with the DOM check)
 - Image-text overlap or unreadable text-on-background
@@ -412,12 +439,16 @@ This walks every descendant of the active slide and checks how far each one stic
 - Aesthetic drift — wrong fonts loaded, wrong colors, broken theme
 - Anything from the Design DON'Ts list that slipped past the Quality Gates
 
-**5. Fix and retry.** If EITHER the DOM check OR your visual review flags issues:
+#### Step 6 — Fix and retry (max 1 per page)
+
+If EITHER the DOM check OR your visual review flags issues:
 - Edit the HTML — target the specific section by `data-page="N"` and `data-bp-id`
-- Re-run steps 2–4 for that page
+- Re-run steps 3–5 for that page
 - **Hard cap: 1 retry per page.** If the second pass still has issues, log them as known limitations and move on. **Never loop.**
 
-**6. After all pages reviewed**, emit the final reference tag — this auto-switches Agent Computer back to the Slides tab and surfaces the finished deck:
+#### Step 7 — Emit final reference tag
+
+After all pages reviewed, emit the final reference tag — this auto-switches Agent Computer back to the Slides tab and surfaces the finished deck:
 
     <rebyte-slide path="/code/slides/{slug}/index.html" pages="N" title="Deck title" />
 
