@@ -337,7 +337,7 @@ Every image is embedded via the **public CDN**. No local files, no relative path
 
 **Two sources, no exceptions:**
 
-- **Generate** with the `image-workflow` skill (uses `nano-banana`). Aspect ratio matches the slide layout (`16:9` for full-bleed, `4:3` or `1:1` for two-col cards). `imageSize: "1K"` for normal, `2K` for hero/title. Then upload:
+- **Generate** with the `image-workflow` skill (uses `nano-banana`). Aspect ratio matches the slide layout (`16:9` for full-bleed, `4:3` or `1:1` for two-col cards). `imageSize: "512"` for normal slides, `"1K"` for hero/full-bleed only. Then upload:
   ```bash
   PUBLIC_URL=$(bash ~/.skills/rebyteai-image-workflow/scripts/upload-public.sh /tmp/img.png "{slug}" "{name}")
   ```
