@@ -11,9 +11,8 @@ Create presentations as pure HTML. No build tools, no frameworks — just HTML, 
 
 **Deploy is optional.** Only deploy to rebyte.pro when the user explicitly asks for a shareable URL. See `references/deploy.md`.
 
-{{include:non-technical-user.md}}
 
-{{include:auth.md}}
+**Requires Rebyte API auth** — `$AUTH_TOKEN` and `$API_URL` are set up per the agent's system prompt; use them as Bearer token and base URL.
 
 **Directory structure:**
 - `SKILL_DIR`: The directory containing this SKILL.md
@@ -332,6 +331,41 @@ Every editable element (headings, paragraphs, lists, stats, images, quotes, code
 
 These attributes are **data-only** -- they do NOT affect styling or layout. Never write CSS selectors that target `data-page` or `data-bp-id`.
 
+## Images
+
+Every image is embedded via the **public CDN**. No local files, no relative paths.
+
+**Two sources, no exceptions:**
+
+- **Generate** with the `image-workflow` skill (uses `nano-banana`). Aspect ratio matches the slide layout (`16:9` for full-bleed, `4:3` or `1:1` for two-col cards). `imageSize: "1K"` for normal, `2K` for hero/title. Then upload:
+  ```bash
+  PUBLIC_URL=$(bash ~/.skills/rebyteai-image-workflow/scripts/upload-public.sh /tmp/img.png "{slug}" "{name}")
+  ```
+- **Reuse** something from `/code/raw/`. Upload the same way via the script above.
+
+**Embed template** (the `<img crossorigin="anonymous">` attribute is mandatory — the chip preview canvas pipeline depends on it):
+
+```html
+<div data-bp-id="img-6-wrap" style="aspect-ratio:16/10; background:var(--widget-bg-secondary); border-radius:var(--widget-border-radius); overflow:hidden;">
+  <img data-bp-id="img-6" crossorigin="anonymous"
+       src="https://api.rebyte.ai/api/public/artifacts/{workspaceId}/{filename}.png"
+       alt="..." style="width:100%; height:100%; object-fit:cover;" />
+</div>
+```
+
+**DON'T:**
+- Hotlink external URLs in `<img src>` — Unsplash, Pexels, Imgur, picsum, placeholder.com, any `https://` host that isn't our public CDN. They hallucinate (you cannot remember real photo IDs from memory), they 404, they get blocked by referer checks. Only `${API_URL}/api/public/artifacts/...` URLs are allowed. The DOM Lint Pass enforces this.
+- Save under `/code/slides/{slug}/assets/`. That directory is gone. The CDN URL is the only reference.
+- Use a relative `<img src="assets/foo.png">`. Relative URLs resolve against `about:srcdoc` in the slide editor preview iframe and 404 on every image.
+- Embed base64 inline — bloats the HTML, slows the editor
+- Use a placeholder `src` and "fill in later" — the next agent won't know to fill it in
+- Skip explicit container dimensions — broken images collapse the layout into a one-pixel sliver
+- Omit `crossorigin="anonymous"` on `<img>` tags — the chip preview canvas will throw SecurityError and produce a blank chip
+
+**Container dimensions are mandatory.** Wrap every `<img>` in a div with `aspect-ratio` or `min-height` so the slot is reserved if the image fails to render — use the embed template above.
+
+The DOM Lint Pass below catches non-CDN external URLs (`reason:external-url`), relative paths (`reason:relative-src`), missing crossorigin (`reason:missing-crossorigin`), and overflow as a deterministic safety net.
+
 ## Quality Gates
 
 Before outputting, verify EVERY gate:
@@ -390,6 +424,23 @@ agent-browser open "file:///code/slides/{slug}/index.html" \
           if (c.width === 0 && c.height === 0) continue;
           const overflow = Math.max(r.top - c.top, c.bottom - r.bottom, r.left - c.left, c.right - r.right);
           if (overflow > 1) issues.push({ tag: el.tagName, bp: el.dataset.bpId || null, overflowPx: Math.round(overflow) });
+        }
+        // Image URL check — only our public CDN is allowed.
+        // Anchored to known relay hosts so https://evil.com/api/public/artifacts/... is NOT accepted.
+        const CDN_PATTERN = /^https?:\/\/(api\.rebyte\.ai|api\.eng0\.ai|localhost:\d+)\/api\/public\/artifacts\//;
+        for (const img of slide.querySelectorAll('img')) {
+          const src = img.getAttribute('src') || '';
+          if (/^https?:/.test(src) && !CDN_PATTERN.test(src)) {
+            issues.push({ tag: 'IMG', bp: img.dataset.bpId || null, badSrc: src.slice(0, 60), reason: 'external-url' });
+          }
+          // Relative paths are also forbidden — they resolve against about:srcdoc in the editor preview iframe and 404
+          if (src && !/^https?:/.test(src) && !src.startsWith('data:')) {
+            issues.push({ tag: 'IMG', bp: img.dataset.bpId || null, badSrc: src.slice(0, 60), reason: 'relative-src' });
+          }
+          // CDN URLs need crossorigin="anonymous" — chip preview canvas depends on it
+          if (CDN_PATTERN.test(src) && img.getAttribute('crossorigin') !== 'anonymous') {
+            issues.push({ tag: 'IMG', bp: img.dataset.bpId || null, badSrc: src.slice(0, 60), reason: 'missing-crossorigin' });
+          }
         }
         report.push({ page: parseInt(slide.dataset.page, 10) || (i + 1), ok: issues.length === 0, issues: issues.slice(0, 5) });
       }
