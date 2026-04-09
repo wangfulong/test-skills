@@ -20,14 +20,13 @@ When choosing between behaviors, **prefer the visual layer**. The user's mental 
 
 ## Sub-skills
 
-- `rebyteai/second-brain` — workspace contract (`raw/`, content dirs, `output/`, `INDEX.md`)
 - `rebyteai/slide` — HTML generation rules, aesthetics, data attributes, **Images**, **DOM Lint Pass**
 - `rebyteai/image-workflow` — image generation via `nano-banana` (Gemini 3.1 Flash image gen)
 
 ## Pre-flight (required)
 
 ```bash
-ls ~/.skills/rebyteai-slide/SKILL.md ~/.skills/rebyteai-second-brain/SKILL.md 2>/dev/null
+ls ~/.skills/rebyteai-slide/SKILL.md 2>/dev/null
 ```
 
 Missing? Use `skill-installer` to install by slug. Don't proceed without `slide`.
@@ -161,5 +160,4 @@ Record published URLs in `/code/output/`.
 ## Reference
 
 - `rebyteai/slide` SKILL.md — HTML generation, aesthetics, design DON'Ts, Images, DOM Lint Pass
-- `rebyteai/second-brain` SKILL.md — workspace contract details (raw/, INDEX.md, INGEST/QUERY patterns)
-- `rebyteai/image-workflow` SKILL.md — image generation specifics
+- `rebyteai/image-workflow` SKILL.md — image generation + CDN upload script
